@@ -437,7 +437,7 @@ export class Anki {
         ankiConnectUrl,
         noteId,
     }: ExportParams) {
-        const fields = {};
+        const fields: { [key: string]: string } = {};
 
         this._appendField(fields, this.settingsProvider.sentenceField, text, true);
         this._appendField(fields, this.settingsProvider.track1Field, track1, true);
