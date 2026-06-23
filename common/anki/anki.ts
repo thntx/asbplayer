@@ -476,7 +476,7 @@ export class Anki {
         };
 
         const gui = mode === 'gui';
-        const isUpdate = mode === 'updateLast' || mode === 'updateSpecific';
+        const isUpdate = mode === 'updateLast' || mode === 'updateSpecific' || mode === 'updateLastForSameLine';
 
         if (this.settingsProvider.audioField && audioClip && audioClip.error === undefined) {
             const sanitizedName = this._sanitizeFileName(audioClip.name);
@@ -519,16 +519,136 @@ export class Anki {
         switch (mode) {
             case 'gui':
                 return (await this._executeAction('guiAddCards', params, ankiConnectUrl)).result;
+            case 'updateLastForSameLine':
             case 'updateLast': {
                 const recentNotes = (
-                    await this._executeAction('findNotes', { query: 'added:1' }, ankiConnectUrl)
+                    await this._executeAction('findNotes', { query: 'added:2' }, ankiConnectUrl)
                 ).result.sort();
 
                 if (recentNotes.length === 0) {
                     throw new Error('Could not find note to update');
                 }
 
-                return await this._updateNoteFields(recentNotes[recentNotes.length - 1], params, tags, ankiConnectUrl);
+                const lastNoteId = recentNotes[recentNotes.length - 1];
+                params.note['id'] = lastNoteId;
+                const infoResponse = await this._executeAction('notesInfo', { notes: [lastNoteId] });
+
+                if (infoResponse.result.length > 0 && infoResponse.result[0].noteId === lastNoteId) {
+                    const info = infoResponse.result[0];
+
+                    this._inheritHtmlMarkupFromField('sentenceField', info, params);
+                    this._inheritHtmlMarkupFromField('track1Field', info, params);
+                    this._inheritHtmlMarkupFromField('track2Field', info, params);
+                    this._inheritHtmlMarkupFromField('track3Field', info, params);
+
+                    await this._executeAction('updateNoteFields', params, ankiConnectUrl);
+
+                    if (tags.length > 0) {
+                        await this._executeAction(
+                            'addTags',
+                            { notes: [lastNoteId], tags: tags.join(' ') },
+                            ankiConnectUrl
+                        );
+                    }
+
+                    // Update other recent cards from the same subtitle line with audio and image.
+                    // Walk backwards from the most recent note, stopping at the first note
+                    // whose sentence doesn't match. This handles cards created across Anki's
+                    // day boundary and avoids scanning the entire deck.
+                    if (mode === 'updateLastForSameLine' && text && this.settingsProvider.sentenceField) {
+                        const normalizedSubtitle = text.replace(/\n/g, ' ');
+                        const sentenceFieldName = this.settingsProvider.sentenceField;
+
+                        // Walk backwards through preceding notes (descending ID order)
+                        const precedingNoteIds = recentNotes
+                            .filter((id: number) => id !== lastNoteId)
+                            .reverse();
+
+                        if (precedingNoteIds.length > 0) {
+                            const precedingInfoResponse = await this._executeAction(
+                                'notesInfo',
+                                { notes: precedingNoteIds },
+                                ankiConnectUrl
+                            );
+
+                            for (const otherInfo of precedingInfoResponse.result) {
+                                const otherSentenceHtml = otherInfo.fields?.[sentenceFieldName]?.value;
+                                if (!otherSentenceHtml) break;
+
+                                const otherSentencePlain = otherSentenceHtml
+                                    .replace(/<br\s*\/?>/gi, ' ')
+                                    .replace(/<[^>]+>/g, '')
+                                    .replace(/&nbsp;/g, ' ')
+                                    .trim();
+
+                                if (
+                                    otherSentencePlain.length === 0 ||
+                                    (!normalizedSubtitle.includes(otherSentencePlain) &&
+                                        !otherSentencePlain.includes(normalizedSubtitle))
+                                ) {
+                                    break;
+                                }
+
+                                // Update asbplayer-provided fields (audio, image, source, url),
+                                // preserving card-specific fields (sentence, word, definition, etc.)
+                                const otherFields: { [key: string]: string } = {};
+
+                                if (this.settingsProvider.audioField && fields[this.settingsProvider.audioField]) {
+                                    otherFields[this.settingsProvider.audioField] =
+                                        fields[this.settingsProvider.audioField];
+                                }
+
+                                if (this.settingsProvider.imageField && fields[this.settingsProvider.imageField]) {
+                                    otherFields[this.settingsProvider.imageField] =
+                                        fields[this.settingsProvider.imageField];
+                                }
+
+                                if (this.settingsProvider.sourceField && fields[this.settingsProvider.sourceField]) {
+                                    otherFields[this.settingsProvider.sourceField] =
+                                        fields[this.settingsProvider.sourceField];
+                                }
+
+                                if (this.settingsProvider.urlField && fields[this.settingsProvider.urlField]) {
+                                    otherFields[this.settingsProvider.urlField] =
+                                        fields[this.settingsProvider.urlField];
+                                }
+
+                                if (Object.keys(otherFields).length === 0) continue;
+
+                                const otherParams = {
+                                    note: {
+                                        id: otherInfo.noteId,
+                                        fields: otherFields,
+                                    },
+                                };
+
+                                await this._executeAction('updateNoteFields', otherParams, ankiConnectUrl);
+
+                                if (tags.length > 0) {
+                                    await this._executeAction(
+                                        'addTags',
+                                        { notes: [otherInfo.noteId], tags: tags.join(' ') },
+                                        ankiConnectUrl
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    if (!this.settingsProvider.wordField || !info.fields) {
+                        return info.noteId;
+                    }
+
+                    const wordField = info.fields[this.settingsProvider.wordField];
+
+                    if (!wordField || !wordField.value) {
+                        return info.noteId;
+                    }
+
+                    return wordField.value;
+                }
+
+                throw new Error('Could not update last card because the card info could not be fetched');
             }
             case 'updateSpecific': {
                 if (noteId === undefined) {
