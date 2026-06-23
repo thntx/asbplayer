@@ -253,6 +253,10 @@ const KeyboardShortcutsSettingsTab: React.FC<Props> = ({
                 label: t('binds.updateSelectedCard')!,
                 boundViaBrowser: true,
             },
+            loadLastSubtitle: {
+                label: t('binds.loadLastSubtitle')!,
+                boundViaBrowser: true,
+            },
             exportCard: {
                 label: t('binds.exportCard')!,
                 boundViaBrowser: true,

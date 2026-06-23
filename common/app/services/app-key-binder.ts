@@ -125,6 +125,14 @@ export default class AppKeyBinder implements KeyBinder {
         return this.defaultKeyBinder.bindUpdateSelectedCard(onUpdateSelectedCard, disabledGetter, useCapture);
     }
 
+    bindLoadLastSubtitle(
+        _onLoadLastSubtitle: (event: KeyboardEvent) => void,
+        _disabledGetter: () => boolean,
+        _useCapture?: boolean | undefined
+    ): () => void {
+        return () => {};
+    }
+
     bindExportCard(
         onExportCard: (event: KeyboardEvent) => void,
         disabledGetter: () => boolean,
